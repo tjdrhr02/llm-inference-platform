@@ -1,0 +1,8 @@
+inference/config/ConcurrencyConfig$InferenceConcurrencyProperties.class
+inference/model/InferenceResponse$Status.class
+inference/service/InferenceService.class
+inference/config/ConcurrencyConfig.class
+inference/controller/InferenceController.class
+inference/InferenceApplication.class
+inference/model/InferenceResponse.class
+inference/model/InferenceRequest.class
