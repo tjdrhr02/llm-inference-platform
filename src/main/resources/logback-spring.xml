@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <!--
+    운영용 최소 structured logging:
+    - MDC requestId 포함
+    - key=value 형태로 파싱 용이
+  -->
+
+  <property name="CONSOLE_PATTERN"
+            value="%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} level=%-5level logger=%logger{36} thread=%thread requestId=%X{requestId} msg=%msg%n%ex{full}"/>
+
+  <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder>
+      <pattern>${CONSOLE_PATTERN}</pattern>
+    </encoder>
+  </appender>
+
+  <root level="INFO">
+    <appender-ref ref="CONSOLE"/>
+  </root>
+</configuration>
+

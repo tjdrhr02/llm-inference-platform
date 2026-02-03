@@ -1,5 +1,6 @@
 /Users/fairytale/dev/ws_cursor/llm-inference-platform/src/main/java/inference/InferenceApplication.java
 /Users/fairytale/dev/ws_cursor/llm-inference-platform/src/main/java/inference/config/ConcurrencyConfig.java
+/Users/fairytale/dev/ws_cursor/llm-inference-platform/src/main/java/inference/controller/ApiExceptionHandler.java
 /Users/fairytale/dev/ws_cursor/llm-inference-platform/src/main/java/inference/controller/InferenceController.java
 /Users/fairytale/dev/ws_cursor/llm-inference-platform/src/main/java/inference/model/InferenceRequest.java
 /Users/fairytale/dev/ws_cursor/llm-inference-platform/src/main/java/inference/model/InferenceResponse.java

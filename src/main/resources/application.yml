@@ -6,6 +6,15 @@ management:
     web:
       exposure:
         include: "health,info,metrics,prometheus"
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
 
 inference:
   concurrency:
@@ -13,4 +22,8 @@ inference:
     workerThreads: 8
     queueCapacity: 200
     acquireTimeoutMs: 50
+  processing:
+    timeoutMs: 1500
+    simulatedMinMs: 80
+    simulatedMaxMs: 2200
 

@@ -1,6 +1,7 @@
 package inference.service;
 
 import inference.config.ConcurrencyConfig.InferenceConcurrencyProperties;
+import inference.config.ConcurrencyConfig.InferenceProcessingProperties;
 import inference.model.InferenceRequest;
 import inference.model.InferenceResponse;
 import inference.model.InferenceResponse.Status;
@@ -8,20 +9,27 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
-import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ThreadLocalRandom;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Service;
 
 @Service
 public class InferenceService {
+  private static final Logger log = LoggerFactory.getLogger(InferenceService.class);
+
   private final Clock clock;
   private final Semaphore semaphore;
   private final ThreadPoolTaskExecutor executor;
   private final InferenceConcurrencyProperties props;
+  private final InferenceProcessingProperties processing;
 
   /**
    * 최소 구현: 메모리 기반 상태 저장소.
@@ -33,23 +41,46 @@ public class InferenceService {
       Clock clock,
       Semaphore inferenceSemaphore,
       ThreadPoolTaskExecutor inferenceExecutor,
-      InferenceConcurrencyProperties props
+      InferenceConcurrencyProperties props,
+      InferenceProcessingProperties processing
   ) {
     this.clock = clock;
     this.semaphore = inferenceSemaphore;
     this.executor = inferenceExecutor;
     this.props = props;
+    this.processing = processing;
   }
 
-  public InferenceResponse submit(InferenceRequest request, String requestIdHint) {
+  public InferenceResponse submit(String requestId, InferenceRequest request) {
     Instant receivedAt = Instant.now(clock);
-    String requestId = normalizeOrGenerateRequestId(requestIdHint, request.getClientRequestId());
 
     InferenceResponse initial = InferenceResponse.queued(requestId, receivedAt);
     store.put(requestId, initial);
 
-    executor.execute(() -> runInference(requestId, request));
-    return initial;
+    try {
+      executor.execute(() -> {
+        try (var ignored = MDC.putCloseable("requestId", requestId)) {
+          runInference(requestId, request);
+        }
+      });
+      log.info("event=inference.submit_enqueued requestId={} status={} model={} promptChars={}",
+          requestId,
+          Status.QUEUED,
+          request.getModel(),
+          request.getPrompt() == null ? 0 : request.getPrompt().length());
+      return initial;
+    } catch (RejectedExecutionException ree) {
+      // 큐가 꽉 찼을 때: 즉시 거절 (클라이언트는 백오프 후 재시도)
+      Instant completedAt = Instant.now(clock);
+      initial.setStatus(Status.REJECTED);
+      initial.setError("queue_full");
+      initial.setCompletedAt(completedAt);
+      initial.setLatencyMs(Duration.between(initial.getReceivedAt(), completedAt).toMillis());
+      store.put(requestId, initial);
+      log.warn("event=inference.submit_rejected requestId={} status={} result={} reason=queue_full queueCapacity={} latencyMs={}",
+          requestId, Status.REJECTED, "REJECTED", props.queueCapacity(), initial.getLatencyMs());
+      return initial;
+    }
   }
 
   public Optional<InferenceResponse> get(String requestId) {
@@ -63,7 +94,6 @@ public class InferenceService {
     }
 
     boolean acquired = false;
-    Instant startedAt = null;
     try {
       acquired = semaphore.tryAcquire(props.acquireTimeoutMs(), TimeUnit.MILLISECONDS);
       if (!acquired) {
@@ -72,18 +102,26 @@ public class InferenceService {
         state.setLatencyMs(Duration.between(state.getReceivedAt(), state.getCompletedAt()).toMillis());
         state.setError("concurrency_limit_reached");
         store.put(requestId, state);
+        log.warn("event=inference.rejected requestId={} status={} result={} reason=concurrency_limit_reached acquireTimeoutMs={} latencyMs={}",
+            requestId, Status.REJECTED, "REJECTED", props.acquireTimeoutMs(), state.getLatencyMs());
         return;
       }
 
-      startedAt = Instant.now(clock);
+      Instant startedAt = Instant.now(clock);
       state.setStatus(Status.RUNNING);
       state.setStartedAt(startedAt);
       store.put(requestId, state);
 
-      // 실제 LLM 호출 대신, 최소한의 더미 작업(운영 관점: 큐/동시성/추적이 핵심)
-      // 여기서는 prompt 길이에 비례해 약간의 시간이 걸리는 것처럼 시뮬레이션.
-      int sleepMs = Math.min(250, Math.max(10, request.getPrompt().length() / 50));
-      Thread.sleep(sleepMs);
+      int plannedMs = computeSimulatedLatencyMs(request);
+      log.info("event=inference.started requestId={} status={} plannedLatencyMs={} timeoutMs={} model={} promptChars={}",
+          requestId,
+          Status.RUNNING,
+          plannedMs,
+          processing.timeoutMs(),
+          request.getModel(),
+          request.getPrompt() == null ? 0 : request.getPrompt().length());
+
+      simulateWorkWithTimeout(plannedMs, processing.timeoutMs());
 
       String output = "ok: " + summarize(request.getPrompt());
       Instant completedAt = Instant.now(clock);
@@ -93,6 +131,8 @@ public class InferenceService {
       state.setCompletedAt(completedAt);
       state.setLatencyMs(Duration.between(state.getReceivedAt(), completedAt).toMillis());
       store.put(requestId, state);
+      log.info("event=inference.completed requestId={} status={} result={} latencyMs={}",
+          requestId, Status.SUCCEEDED, "SUCCESS", state.getLatencyMs());
     } catch (InterruptedException ie) {
       Thread.currentThread().interrupt();
       Instant completedAt = Instant.now(clock);
@@ -101,6 +141,17 @@ public class InferenceService {
       state.setCompletedAt(completedAt);
       state.setLatencyMs(Duration.between(state.getReceivedAt(), completedAt).toMillis());
       store.put(requestId, state);
+      log.warn("event=inference.completed requestId={} status={} result={} reason=interrupted latencyMs={}",
+          requestId, Status.FAILED, "FAILED", state.getLatencyMs());
+    } catch (TimeoutException te) {
+      Instant completedAt = Instant.now(clock);
+      state.setStatus(Status.FAILED);
+      state.setError("timeout");
+      state.setCompletedAt(completedAt);
+      state.setLatencyMs(Duration.between(state.getReceivedAt(), completedAt).toMillis());
+      store.put(requestId, state);
+      log.warn("event=inference.completed requestId={} status={} result={} reason=timeout timeoutMs={} latencyMs={}",
+          requestId, Status.FAILED, "TIMEOUT", processing.timeoutMs(), state.getLatencyMs());
     } catch (Exception e) {
       Instant completedAt = Instant.now(clock);
       state.setStatus(Status.FAILED);
@@ -108,10 +159,36 @@ public class InferenceService {
       state.setCompletedAt(completedAt);
       state.setLatencyMs(Duration.between(state.getReceivedAt(), completedAt).toMillis());
       store.put(requestId, state);
+      log.error("event=inference.completed requestId={} status={} result={} reason=exception exceptionType={} latencyMs={}",
+          requestId, Status.FAILED, "FAILED", e.getClass().getName(), state.getLatencyMs(), e);
     } finally {
       if (acquired) {
         semaphore.release();
       }
+    }
+  }
+
+  private int computeSimulatedLatencyMs(InferenceRequest request) {
+    int promptChars = request.getPrompt() == null ? 0 : request.getPrompt().length();
+    // 운영적으로 “길이가 길수록 느려지는” 형태를 모사 + 약간의 지터
+    int base = processing.simulatedMinMs() + (promptChars / 25);
+    int clamped = Math.min(processing.simulatedMaxMs(), Math.max(processing.simulatedMinMs(), base));
+    int jitter = (int) Math.round(clamped * 0.20); // +-20%
+    int lo = Math.max(processing.simulatedMinMs(), clamped - jitter);
+    int hi = Math.min(processing.simulatedMaxMs(), clamped + jitter);
+    return ThreadLocalRandom.current().nextInt(lo, hi + 1);
+  }
+
+  private void simulateWorkWithTimeout(int plannedMs, long timeoutMs) throws InterruptedException, TimeoutException {
+    Instant deadline = Instant.now(clock).plusMillis(timeoutMs);
+    int remaining = plannedMs;
+    while (remaining > 0) {
+      if (Instant.now(clock).isAfter(deadline)) {
+        throw new TimeoutException();
+      }
+      int chunk = Math.min(50, remaining);
+      Thread.sleep(chunk);
+      remaining -= chunk;
     }
   }
 
@@ -121,19 +198,8 @@ public class InferenceService {
     return p.substring(0, 77) + "...";
   }
 
-  private static String normalizeOrGenerateRequestId(String requestIdHint, String clientRequestId) {
-    String candidate = firstNonBlank(requestIdHint, clientRequestId);
-    if (candidate != null) {
-      // 지나치게 긴 값은 로깅/저장 비용을 키우므로 제한
-      return candidate.length() <= 128 ? candidate : candidate.substring(0, 128);
-    }
-    return UUID.randomUUID().toString();
-  }
-
-  private static String firstNonBlank(String a, String b) {
-    if (a != null && !a.isBlank()) return a;
-    if (b != null && !b.isBlank()) return b;
-    return null;
+  private static final class TimeoutException extends Exception {
+    private TimeoutException() {}
   }
 }
 

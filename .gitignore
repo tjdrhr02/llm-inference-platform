@@ -1,0 +1,37 @@
+# Maven / build outputs
+/target/
+*.class
+*.jar
+*.war
+*.ear
+
+# Logs / dumps
+*.log
+hs_err_pid*
+*.hprof
+
+# OS files
+.DS_Store
+
+# IntelliJ / JetBrains
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# VS Code
+.vscode/
+
+# Maven release / temp
+pom.xml.versionsBackup
+pom.xml.releaseBackup
+release.properties
+
+# Generated listings (if not source)
+*.lst
+
+# Env / secrets (adjust to your policy)
+.env
+application-*.yml
+!application.yml
