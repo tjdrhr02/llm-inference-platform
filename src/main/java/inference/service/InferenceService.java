@@ -5,12 +5,11 @@ import inference.config.ConcurrencyConfig.InferenceProcessingProperties;
 import inference.model.InferenceRequest;
 import inference.model.InferenceResponse;
 import inference.model.InferenceResponse.Status;
+import inference.store.InferenceStore;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -30,32 +29,29 @@ public class InferenceService {
   private final ThreadPoolTaskExecutor executor;
   private final InferenceConcurrencyProperties props;
   private final InferenceProcessingProperties processing;
-
-  /**
-   * 최소 구현: 메모리 기반 상태 저장소.
-   * - K8s에서 scale-out 시에는 Redis/DB 등 외부 저장소로 교체 권장.
-   */
-  private final ConcurrentMap<String, InferenceResponse> store = new ConcurrentHashMap<>();
+  private final InferenceStore store;
 
   public InferenceService(
       Clock clock,
       Semaphore inferenceSemaphore,
       ThreadPoolTaskExecutor inferenceExecutor,
       InferenceConcurrencyProperties props,
-      InferenceProcessingProperties processing
+      InferenceProcessingProperties processing,
+      InferenceStore store
   ) {
     this.clock = clock;
     this.semaphore = inferenceSemaphore;
     this.executor = inferenceExecutor;
     this.props = props;
     this.processing = processing;
+    this.store = store;
   }
 
   public InferenceResponse submit(String requestId, InferenceRequest request) {
     Instant receivedAt = Instant.now(clock);
 
     InferenceResponse initial = InferenceResponse.queued(requestId, receivedAt);
-    store.put(requestId, initial);
+    store.save(initial);
 
     try {
       executor.execute(() -> {
@@ -76,7 +72,7 @@ public class InferenceService {
       initial.setError("queue_full");
       initial.setCompletedAt(completedAt);
       initial.setLatencyMs(Duration.between(initial.getReceivedAt(), completedAt).toMillis());
-      store.put(requestId, initial);
+      store.save(initial);
       log.warn("event=inference.submit_rejected requestId={} status={} result={} reason=queue_full queueCapacity={} latencyMs={}",
           requestId, Status.REJECTED, "REJECTED", props.queueCapacity(), initial.getLatencyMs());
       return initial;
@@ -84,11 +80,11 @@ public class InferenceService {
   }
 
   public Optional<InferenceResponse> get(String requestId) {
-    return Optional.ofNullable(store.get(requestId));
+    return store.find(requestId);
   }
 
   private void runInference(String requestId, InferenceRequest request) {
-    InferenceResponse state = store.get(requestId);
+    InferenceResponse state = store.find(requestId).orElse(null);
     if (state == null) {
       return;
     }
@@ -101,7 +97,7 @@ public class InferenceService {
         state.setCompletedAt(Instant.now(clock));
         state.setLatencyMs(Duration.between(state.getReceivedAt(), state.getCompletedAt()).toMillis());
         state.setError("concurrency_limit_reached");
-        store.put(requestId, state);
+        store.save(state);
         log.warn("event=inference.rejected requestId={} status={} result={} reason=concurrency_limit_reached acquireTimeoutMs={} latencyMs={}",
             requestId, Status.REJECTED, "REJECTED", props.acquireTimeoutMs(), state.getLatencyMs());
         return;
@@ -110,7 +106,7 @@ public class InferenceService {
       Instant startedAt = Instant.now(clock);
       state.setStatus(Status.RUNNING);
       state.setStartedAt(startedAt);
-      store.put(requestId, state);
+      store.save(state);
 
       int plannedMs = computeSimulatedLatencyMs(request);
       log.info("event=inference.started requestId={} status={} plannedLatencyMs={} timeoutMs={} model={} promptChars={}",
@@ -130,7 +126,7 @@ public class InferenceService {
       state.setOutput(output);
       state.setCompletedAt(completedAt);
       state.setLatencyMs(Duration.between(state.getReceivedAt(), completedAt).toMillis());
-      store.put(requestId, state);
+      store.save(state);
       log.info("event=inference.completed requestId={} status={} result={} latencyMs={}",
           requestId, Status.SUCCEEDED, "SUCCESS", state.getLatencyMs());
     } catch (InterruptedException ie) {
@@ -140,7 +136,7 @@ public class InferenceService {
       state.setError("interrupted");
       state.setCompletedAt(completedAt);
       state.setLatencyMs(Duration.between(state.getReceivedAt(), completedAt).toMillis());
-      store.put(requestId, state);
+      store.save(state);
       log.warn("event=inference.completed requestId={} status={} result={} reason=interrupted latencyMs={}",
           requestId, Status.FAILED, "FAILED", state.getLatencyMs());
     } catch (TimeoutException te) {
@@ -149,7 +145,7 @@ public class InferenceService {
       state.setError("timeout");
       state.setCompletedAt(completedAt);
       state.setLatencyMs(Duration.between(state.getReceivedAt(), completedAt).toMillis());
-      store.put(requestId, state);
+      store.save(state);
       log.warn("event=inference.completed requestId={} status={} result={} reason=timeout timeoutMs={} latencyMs={}",
           requestId, Status.FAILED, "TIMEOUT", processing.timeoutMs(), state.getLatencyMs());
     } catch (Exception e) {
@@ -158,7 +154,7 @@ public class InferenceService {
       state.setError("error: " + e.getClass().getSimpleName());
       state.setCompletedAt(completedAt);
       state.setLatencyMs(Duration.between(state.getReceivedAt(), completedAt).toMillis());
-      store.put(requestId, state);
+      store.save(state);
       log.error("event=inference.completed requestId={} status={} result={} reason=exception exceptionType={} latencyMs={}",
           requestId, Status.FAILED, "FAILED", e.getClass().getName(), state.getLatencyMs(), e);
     } finally {
