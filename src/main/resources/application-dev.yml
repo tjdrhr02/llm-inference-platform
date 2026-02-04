@@ -1,0 +1,19 @@
+# 개발 환경 (SPRING_PROFILES_ACTIVE=dev)
+# 로컬/개발 서버용: 소규모 리소스, 짧은 타임아웃, 상세 로그
+
+logging:
+  level:
+    root: INFO
+    inference: DEBUG
+
+inference:
+  concurrency:
+    maxConcurrent: 4
+    workerThreads: 4
+    queueCapacity: 50
+    acquireTimeoutMs: 100
+    shutdownAwaitSeconds: 15
+  processing:
+    timeoutMs: 3000
+    simulatedMinMs: 50
+    simulatedMaxMs: 1500

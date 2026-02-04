@@ -1,0 +1,19 @@
+# 운영 환경 (SPRING_PROFILES_ACTIVE=prod)
+# K8s/운영 서버용: 운영 규모, 적절한 타임아웃, INFO 로그
+
+logging:
+  level:
+    root: INFO
+    inference: INFO
+
+inference:
+  concurrency:
+    maxConcurrent: 8
+    workerThreads: 8
+    queueCapacity: 200
+    acquireTimeoutMs: 50
+    shutdownAwaitSeconds: 30
+  processing:
+    timeoutMs: 1500
+    simulatedMinMs: 80
+    simulatedMaxMs: 2200

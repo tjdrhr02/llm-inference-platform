@@ -33,5 +33,5 @@ release.properties
 
 # Env / secrets (adjust to your policy)
 .env
-application-*.yml
-!application.yml
+*.lst
+*.class

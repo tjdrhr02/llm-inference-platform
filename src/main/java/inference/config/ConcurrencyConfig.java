@@ -22,13 +22,15 @@ public class ConcurrencyConfig {
       @Value("${inference.concurrency.maxConcurrent:8}") int maxConcurrent,
       @Value("${inference.concurrency.workerThreads:8}") int workerThreads,
       @Value("${inference.concurrency.queueCapacity:200}") int queueCapacity,
-      @Value("${inference.concurrency.acquireTimeoutMs:50}") long acquireTimeoutMs
+      @Value("${inference.concurrency.acquireTimeoutMs:50}") long acquireTimeoutMs,
+      @Value("${inference.concurrency.shutdownAwaitSeconds:30}") int shutdownAwaitSeconds
   ) {
     return new InferenceConcurrencyProperties(
         maxConcurrent,
         workerThreads,
         queueCapacity,
-        acquireTimeoutMs
+        acquireTimeoutMs,
+        shutdownAwaitSeconds
     );
   }
 
@@ -57,6 +59,9 @@ public class ConcurrencyConfig {
     exec.setTaskDecorator(mdcTaskDecorator());
     // 큐가 꽉 차면 즉시 거절 -> 비동기 API에서 호출자 스레드가 막히지 않게 함
     exec.setRejectedExecutionHandler(new java.util.concurrent.ThreadPoolExecutor.AbortPolicy());
+    // Graceful shutdown: 컨텍스트 종료 시 in-flight 작업을 끝까지 기다린 뒤 종료
+    exec.setWaitForTasksToCompleteOnShutdown(true);
+    exec.setAwaitTerminationSeconds(props.shutdownAwaitSeconds());
     exec.initialize();
     return exec;
   }
@@ -89,7 +94,8 @@ public class ConcurrencyConfig {
       int maxConcurrent,
       int workerThreads,
       int queueCapacity,
-      long acquireTimeoutMs
+      long acquireTimeoutMs,
+      int shutdownAwaitSeconds
   ) {}
 
   public record InferenceProcessingProperties(

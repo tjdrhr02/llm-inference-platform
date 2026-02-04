@@ -1,5 +1,10 @@
+# 공통 설정 (모든 프로파일에서 로드됨)
+# 프로파일: dev → application-dev.yml 로드, prod → application-prod.yml 로드
+# 예: SPRING_PROFILES_ACTIVE=dev 또는 --spring.profiles.active=prod
+
 server:
   port: 8080
+  shutdown: graceful
 
 management:
   endpoints:
@@ -16,12 +21,14 @@ management:
     readinessstate:
       enabled: true
 
+# 기본값 (프로파일 미지정 시). dev/prod 에서 오버라이드됨
 inference:
   concurrency:
     maxConcurrent: 8
     workerThreads: 8
     queueCapacity: 200
     acquireTimeoutMs: 50
+    shutdownAwaitSeconds: 30
   processing:
     timeoutMs: 1500
     simulatedMinMs: 80
