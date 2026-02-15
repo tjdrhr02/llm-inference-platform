@@ -1,0 +1,21 @@
+.git
+.gitignore
+.idea
+.vscode
+**/*.iml
+
+# build outputs
+target
+**/target
+
+# logs / dumps
+*.log
+hs_err_pid*
+*.hprof
+
+# env / secrets
+.env
+
+# docs / misc
+**/.DS_Store
+

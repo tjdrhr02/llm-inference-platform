@@ -156,3 +156,47 @@ curl -i -X POST "http://localhost:8080/v1/inference" \
 curl -s "http://localhost:8080/v1/inference/demo-1" | jq .
 ```
 
+## Docker (환경 독립 패키징)
+
+이미지 빌드:
+
+```bash
+docker build -t llm-inference-platform:local .
+```
+
+태깅 팁(로컬에서 버전 구분):
+
+```bash
+TAG="$(git rev-parse --short HEAD)"
+docker build -t llm-inference-platform:${TAG} .
+```
+
+컨테이너 실행 (prod 기본값):
+
+```bash
+docker run --rm -p 8080:8080 llm-inference-platform:local
+```
+
+개발 프로파일로 실행:
+
+```bash
+docker run --rm -p 8080:8080 \
+  -e SPRING_PROFILES_ACTIVE=dev \
+  llm-inference-platform:local
+```
+
+런타임 튜닝(예: 메모리 비율/GC)은 `JAVA_TOOL_OPTIONS`로 주입:
+
+```bash
+docker run --rm -p 8080:8080 \
+  -e JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75 -XX:+UseG1GC" \
+  llm-inference-platform:local
+```
+
+헬스 체크:
+
+```bash
+curl -s "http://localhost:8080/actuator/health/readiness" | jq .
+curl -s "http://localhost:8080/actuator/health/liveness" | jq .
+```
+
