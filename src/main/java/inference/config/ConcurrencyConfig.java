@@ -38,9 +38,11 @@ public class ConcurrencyConfig {
   public InferenceProcessingProperties inferenceProcessingProperties(
       @Value("${inference.processing.timeoutMs:1500}") long timeoutMs,
       @Value("${inference.processing.simulatedMinMs:80}") int simulatedMinMs,
-      @Value("${inference.processing.simulatedMaxMs:2200}") int simulatedMaxMs
+      @Value("${inference.processing.simulatedMaxMs:2200}") int simulatedMaxMs,
+      @Value("${inference.processing.cpuBurn.enabled:false}") boolean cpuBurnEnabled,
+      @Value("${inference.processing.cpuBurn.chunkMs:50}") int cpuBurnChunkMs
   ) {
-    return new InferenceProcessingProperties(timeoutMs, simulatedMinMs, simulatedMaxMs);
+    return new InferenceProcessingProperties(timeoutMs, simulatedMinMs, simulatedMaxMs, cpuBurnEnabled, cpuBurnChunkMs);
   }
 
   @Bean
@@ -101,7 +103,9 @@ public class ConcurrencyConfig {
   public record InferenceProcessingProperties(
       long timeoutMs,
       int simulatedMinMs,
-      int simulatedMaxMs
+      int simulatedMaxMs,
+      boolean cpuBurnEnabled,
+      int cpuBurnChunkMs
   ) {}
 }
 

@@ -23,6 +23,7 @@ import org.springframework.stereotype.Service;
 @Service
 public class InferenceService {
   private static final Logger log = LoggerFactory.getLogger(InferenceService.class);
+  private static volatile long CPU_SINK = 0L;
 
   private final Clock clock;
   private final Semaphore semaphore;
@@ -182,10 +183,26 @@ public class InferenceService {
       if (Instant.now(clock).isAfter(deadline)) {
         throw new TimeoutException();
       }
-      int chunk = Math.min(50, remaining);
-      Thread.sleep(chunk);
+      int chunk = Math.min(
+          Math.max(1, processing.cpuBurnChunkMs()),
+          remaining
+      );
+      if (processing.cpuBurnEnabled()) {
+        burnCpuMs(chunk);
+      } else {
+        Thread.sleep(chunk);
+      }
       remaining -= chunk;
     }
+  }
+
+  private static void burnCpuMs(int ms) {
+    long end = System.nanoTime() + (ms * 1_000_000L);
+    long x = 0L;
+    while (System.nanoTime() < end) {
+      x ^= System.nanoTime();
+    }
+    CPU_SINK = x;
   }
 
   private static String summarize(String prompt) {
